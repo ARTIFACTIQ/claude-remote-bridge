@@ -102,20 +102,51 @@ crb logs              # Show bridge logs
 
 ## Integration with Claude Code
 
-### As a Hook (Recommended)
+### Automatic Hook (Recommended)
 
-Add to your Claude Code hooks to auto-check inbox:
+Install the hook to make Claude Code auto-check the inbox on every message:
+
+```bash
+# Automatic installation
+python src/install_hook.py
+
+# Or manual: copy to ~/.claude/hooks.json
+cp examples/hooks.json ~/.claude/hooks.json
+```
+
+The hook configuration (`~/.claude/hooks.json`):
 
 ```json
-// .claude/hooks.json
 {
-  "pre_tool_call": [
+  "UserPromptSubmit": [
     {
-      "command": "python /path/to/claude-remote-bridge/src/claude_integration.py",
-      "description": "Check for remote messages"
+      "command": "python3 ~/claude-remote-bridge/src/claude_integration.py 2>/dev/null | head -20",
+      "timeout": 5000
     }
   ]
 }
+```
+
+**What this does:** Every time you send a message to Claude Code, it first checks the remote inbox and displays any new messages. This means:
+
+1. Send a message via ntfy from your phone
+2. Send ANY message in Claude Code (even just "." or "continue")
+3. Claude sees your ntfy message automatically
+
+### Hook Management
+
+```bash
+# Install hook
+python src/install_hook.py
+
+# Reinstall/update hook
+python src/install_hook.py --force
+
+# Uninstall hook
+python src/install_hook.py --uninstall
+
+# Specify custom bridge path
+python src/install_hook.py --bridge-path /custom/path
 ```
 
 ### Manual Check
@@ -123,9 +154,7 @@ Add to your Claude Code hooks to auto-check inbox:
 Ask Claude to check the inbox:
 > "Check the remote inbox for any messages"
 
-Claude can then use the integration module to read messages.
-
-### In Python Scripts
+Or Claude can use the integration module directly:
 
 ```python
 from src.claude_integration import check_inbox, reply, get_inbox_summary
@@ -140,6 +169,64 @@ print(f"Unread: {summary['unread']}")
 # Send responses
 reply("Task completed!", priority="high", tags="success")
 ```
+
+## Important Limitations
+
+### The "Nudge" Problem
+
+**Q: Can I nudge Claude remotely when it's stuck?**
+
+**A: Partially.** Here's the reality:
+
+```
+You send ntfy ──▶ Bridge writes to ~/.claude_inbox ──▶ Claude checks on next interaction
+                                                              │
+                                                              ▼
+                                                    Claude does NOT auto-wake
+                                                    You must trigger a check
+```
+
+| Scenario | What Works |
+|----------|------------|
+| Claude waiting for your input | Send ntfy + send anything here (".", "continue") |
+| Claude running a long task | Claude should periodically check inbox in workflow |
+| Claude completely idle | Send ntfy + send anything to wake Claude |
+
+### Why This Limitation Exists
+
+Claude Code doesn't have:
+- Background polling/listening capability
+- Ability to interrupt itself
+- Push notification reception
+
+The hook helps by checking inbox on EVERY user message, but you still need to send *something* in the chat to trigger it.
+
+### Workarounds
+
+1. **For long tasks:** Ask Claude to check inbox periodically
+   > "Check the remote inbox every 10 minutes during training"
+
+2. **For approvals:** Send ntfy message, then send "." in chat
+   ```
+   Phone: curl -d "approved" ntfy.sh/my-topic
+   Chat:  .
+   Claude sees: "approved" from remote inbox
+   ```
+
+3. **Future improvement:** Claude Code could add native remote messaging (feature request to Anthropic)
+
+### Best Practices
+
+1. **Use separate topics** for cleaner communication:
+   - `my-claude-inbox` - messages TO Claude
+   - `my-claude-outbox` - messages FROM Claude (subscribe on phone)
+
+2. **Keep messages short** - they're displayed in Claude's context
+
+3. **Use priority levels** for important messages:
+   ```bash
+   curl -d "URGENT: stop training" -H "Priority: high" ntfy.sh/topic
+   ```
 
 ## Message Format
 

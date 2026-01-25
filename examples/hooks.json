@@ -1,0 +1,8 @@
+{
+  "UserPromptSubmit": [
+    {
+      "command": "python3 ~/claude-remote-bridge/src/claude_integration.py 2>/dev/null | head -20",
+      "timeout": 5000
+    }
+  ]
+}

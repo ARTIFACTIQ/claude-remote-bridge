@@ -25,10 +25,13 @@ Commands:
     reply <message>   Alias for send
     clear             Clear inbox
     logs              Show bridge logs
+    hook              Install Claude Code auto-check hook
+    unhook            Remove Claude Code hook
     help              Show this help
 
 Examples:
     crb start my-claude-topic
+    crb hook                      # Install auto-check hook
     crb inbox
     crb send "proceed with the task"
     crb stop
@@ -169,6 +172,12 @@ case "${1:-help}" in
         ;;
     logs)
         show_logs
+        ;;
+    hook)
+        python3 "${SCRIPT_DIR}/install_hook.py"
+        ;;
+    unhook)
+        python3 "${SCRIPT_DIR}/install_hook.py" --uninstall
         ;;
     help|--help|-h)
         usage
