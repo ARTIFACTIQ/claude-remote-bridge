@@ -34,6 +34,18 @@ except ImportError:
     print("Error: requests library required. Install with: pip install requests")
     sys.exit(1)
 
+# Import query handler
+try:
+    from query_handler import handle_query
+except ImportError:
+    # Fallback if not in same directory
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent))
+    try:
+        from query_handler import handle_query
+    except ImportError:
+        handle_query = None
+
 
 DEFAULT_INBOX = Path.home() / ".claude_inbox"
 DEFAULT_OUTBOX = Path.home() / ".claude_outbox"
@@ -49,8 +61,10 @@ class ClaudeRemoteBridge:
         inbox_path: Path = DEFAULT_INBOX,
         outbox_path: Path = DEFAULT_OUTBOX,
         poll_interval: int = 5,
+        notify_topic: Optional[str] = None,
     ):
         self.topic = topic
+        self.notify_topic = notify_topic or topic  # Topic for query responses
         self.inbox_path = Path(inbox_path)
         self.outbox_path = Path(outbox_path)
         self.poll_interval = poll_interval
@@ -111,8 +125,35 @@ class ClaudeRemoteBridge:
 
         print(f"[{self._timestamp()}] Received: {title or body[:50]}")
 
-    def send_to_ntfy(self, message: str, title: str = "", priority: str = "default", tags: str = ""):
+    def process_query(self, message: dict) -> bool:
+        """
+        Check if message is a query and process it.
+
+        Returns True if it was a query (handled), False otherwise.
+        """
+        if handle_query is None:
+            return False
+
+        body = message.get("message", "")
+        result = handle_query(body)
+
+        if result is None:
+            return False
+
+        # Send query response to notify topic
+        print(f"[{self._timestamp()}] Query: {body[:30]}...")
+        self.send_to_ntfy(
+            result["response"],
+            title=result.get("title", "Query Result"),
+            tags=result.get("tags", "robot"),
+            topic=self.notify_topic,
+        )
+        print(f"[{self._timestamp()}] Response sent to {self.notify_topic}")
+        return True
+
+    def send_to_ntfy(self, message: str, title: str = "", priority: str = "default", tags: str = "", topic: Optional[str] = None):
         """Send a message to ntfy topic."""
+        target_topic = topic or self.topic
         try:
             headers = {"Title": title} if title else {}
             if priority:
@@ -121,7 +162,7 @@ class ClaudeRemoteBridge:
                 headers["Tags"] = tags
 
             response = requests.post(
-                f"{NTFY_BASE_URL}/{self.topic}",
+                f"{NTFY_BASE_URL}/{target_topic}",
                 data=message.encode("utf-8"),
                 headers=headers,
                 timeout=10,
@@ -201,7 +242,10 @@ class ClaudeRemoteBridge:
                     if msg_id and msg_id not in seen_ids:
                         # Skip our own startup message
                         if "Bridge started" not in msg.get("message", ""):
-                            self.write_to_inbox(msg)
+                            # Check if it's a query - if so, process and respond
+                            if not self.process_query(msg):
+                                # Not a query, write to inbox for Claude
+                                self.write_to_inbox(msg)
                         seen_ids.add(msg_id)
 
                 # Check outbox for outgoing messages
@@ -356,6 +400,12 @@ def main():
         help="Poll interval in seconds (default: 5)",
     )
     parser.add_argument(
+        "--notify-topic", "-n",
+        type=str,
+        default=None,
+        help="Topic for query responses (default: same as --topic)",
+    )
+    parser.add_argument(
         "--daemon", "-d",
         action="store_true",
         help="Run as background daemon",
@@ -374,6 +424,7 @@ def main():
         inbox_path=args.inbox,
         outbox_path=args.outbox,
         poll_interval=args.poll_interval,
+        notify_topic=args.notify_topic,
     )
 
     # Handle signals
