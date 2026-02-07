@@ -26,7 +26,13 @@ from typing import Dict, Optional
 
 
 # Training log location (configurable via env)
-TRAINING_LOG = os.environ.get("TRAINING_LOG", "/tmp/training_v4_epoch2.log")
+TRAINING_LOG = os.environ.get("TRAINING_LOG", "/tmp/training.log")
+
+# Process name pattern to search for (configurable via env)
+TRAINING_PROCESS = os.environ.get("TRAINING_PROCESS", "train")
+
+# Monitor process name pattern (configurable via env)
+MONITOR_PROCESS = os.environ.get("MONITOR_PROCESS", "training_monitor")
 
 
 def handle_query(message: str) -> Optional[Dict]:
@@ -90,7 +96,7 @@ def query_training() -> Dict:
     try:
         # Check if training process is running
         result = subprocess.run(
-            ["pgrep", "-f", "train_v4_m4bridge"],
+            ["pgrep", "-f", TRAINING_PROCESS],
             capture_output=True, text=True
         )
 
@@ -117,19 +123,19 @@ def query_training() -> Dict:
             lines = content.replace('\r', '\n').split('\n')
             progress_line = ""
             for line in reversed(lines):
-                if '/15' in line and ('box_loss' in line.lower() or 'epoch' in line.lower() or '%' in line):
+                if re.search(r'\d+/\d+', line) and ('box_loss' in line.lower() or 'epoch' in line.lower() or '%' in line):
                     progress_line = line.strip()
                     break
-                if re.search(r'\d+/15.*\d+%', line):
+                if re.search(r'\d+/\d+.*\d+%', line):
                     progress_line = line.strip()
                     break
 
             if progress_line:
                 # Parse progress
-                # Format: 1/15 1.7G 2.989 5.435 4.506 8 448: 78% ...
-                match = re.search(r'(\d+)/15.*?(\d+)%', progress_line)
+                # Format: 1/N 1.7G 2.989 5.435 4.506 8 448: 78% ...
+                match = re.search(r'(\d+)/(\d+).*?(\d+)%', progress_line)
                 if match:
-                    epoch, pct = match.groups()
+                    epoch, total_epochs, pct = match.groups()
 
                     # Extract losses
                     loss_match = re.search(r'(\d+\.\d+)\s+(\d+\.\d+)\s+(\d+\.\d+)', progress_line)
@@ -139,7 +145,7 @@ def query_training() -> Dict:
                         losses = f"\nBox: {box} | Cls: {cls} | DFL: {dfl}"
 
                     return {
-                        "response": f"Epoch {epoch}/15 - {pct}% complete{losses}\nPID: {pid}",
+                        "response": f"Epoch {epoch}/{total_epochs} - {pct}% complete{losses}\nPID: {pid}",
                         "title": "Training Status",
                         "tags": "chart_with_upwards_trend"
                     }
@@ -177,18 +183,18 @@ def query_tasks() -> Dict:
 
         # Training task
         if "No training" in training_status["response"]:
-            tasks.append("1. [STOPPED] M4 Training")
+            tasks.append("1. [STOPPED] Training")
         else:
-            match = re.search(r'Epoch (\d+)/15.*?(\d+)%', training_status["response"])
+            match = re.search(r'Epoch (\d+)/(\d+).*?(\d+)%', training_status["response"])
             if match:
-                epoch, pct = match.groups()
-                tasks.append(f"1. [IN PROGRESS] M4 Training - Epoch {epoch}/15 ({pct}%)")
+                epoch, total, pct = match.groups()
+                tasks.append(f"1. [IN PROGRESS] Training - Epoch {epoch}/{total} ({pct}%)")
             else:
-                tasks.append("1. [IN PROGRESS] M4 Training")
+                tasks.append("1. [IN PROGRESS] Training")
 
         # Check for monitoring
         result = subprocess.run(
-            ["pgrep", "-f", "training_monitor"],
+            ["pgrep", "-f", MONITOR_PROCESS],
             capture_output=True, text=True
         )
         if result.returncode == 0:
